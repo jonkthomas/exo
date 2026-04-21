@@ -130,7 +130,15 @@ let
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ [ pkgs.rdma-core ];
           });
+          nvidia-cufile-cu12 = prev.nvidia-cufile-cu12.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ [ pkgs.rdma-core ];
+          });
           nvidia-cusolver = prev.nvidia-cusolver.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ cudaLibs;
+          });
+          nvidia-cusolver-cu12 = prev.nvidia-cusolver-cu12.overrideAttrs (old: {
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ cudaLibs;
           });
@@ -142,11 +150,32 @@ let
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ [ cudaLibs ];
           });
+          nvidia-cusparse-cu12 = prev.nvidia-cusparse-cu12.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
+            buildInputs = old.buildInputs ++ [ cudaLibs ];
+          });
+
           torch = prev.torch.overrideAttrs (old: {
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ cudaLibs;
           });
-        };
+          torch-c-dlpack-ext = prev.torch-c-dlpack-ext.overrideAttrs (old: {
+            buildInputs = old.buildInputs ++ cudaLibs;
+            autoPatchelfIgnoreMissingDeps = [ "*" ];
+          });
+        } // lib.optionalAttrs (cudaSupport && isx86_64) {
+          numba = prev.numba.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.tbb ];
+          });
+          intel-openmp = prev.intel-openmp.overrideAttrs (_old: {
+            postFixup = ''
+              rm -f $out/lib/libarcher.so
+              rm -f $out/lib/libomptarget.so
+              rm -f $out/lib/libomptarget.rtl.*.so*
+              rm -f $out/lib/libomptarget.sycl.wrap.so
+            '';
+          }); };
+
       pyprojectOverlay = workspace.mkPyprojectOverlay {
         sourcePreference = "wheel";
         dependencies = members;
