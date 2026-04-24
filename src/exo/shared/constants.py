@@ -92,6 +92,10 @@ EXO_ENABLE_IMAGE_MODELS = (
     os.getenv("EXO_ENABLE_IMAGE_MODELS", "false").lower() == "true"
 )
 
+EXO_ENABLE_VIDEO_MODELS = (
+    os.getenv("EXO_ENABLE_VIDEO_MODELS", "false").lower() == "true"
+)
+
 EXO_OFFLINE = os.getenv("EXO_OFFLINE", "false").lower() == "true"
 
 EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true"

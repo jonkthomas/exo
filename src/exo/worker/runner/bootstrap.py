@@ -43,6 +43,13 @@ def entrypoint(
                 bound_instance, event_sender, task_receiver, cancel_receiver
             )
             runner.main()
+        elif bound_instance.is_video_model:
+            from exo.worker.runner.video_models.runner import Runner as VideoRunner
+
+            runner = VideoRunner(
+                bound_instance, event_sender, task_receiver, cancel_receiver
+            )
+            runner.main()
         else:
             from exo.worker.runner.llm_inference.runner import Runner
 

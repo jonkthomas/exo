@@ -57,6 +57,10 @@ class BoundInstance(CamelCaseModel):
             or ModelTask.ImageToImage in self.bound_shard.model_card.tasks
         )
 
+    @property
+    def is_video_model(self) -> bool:
+        return ModelTask.TextToVideo in self.bound_shard.model_card.tasks
+
     @model_validator(mode="after")
     def validate_shard_exists(self) -> "BoundInstance":
         assert (

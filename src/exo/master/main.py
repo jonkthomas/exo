@@ -28,6 +28,7 @@ from exo.shared.types.commands import (
     TaskFinished,
     TestCommand,
     TextGeneration,
+    VideoGeneration,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
@@ -61,6 +62,9 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
+)
+from exo.shared.types.tasks import (
+    VideoGeneration as VideoGenerationTask,
 )
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender
@@ -277,6 +281,49 @@ class Master:
                                         for shard in selected_instance.shard_assignments.runner_to_shard.values()
                                     )
                                     self._expected_ranks[task_id] = ranks
+                        case VideoGeneration():
+                            for instance in self.state.instances.values():
+                                if (
+                                    instance.shard_assignments.model_id
+                                    == command.task_params.model
+                                ):
+                                    task_count = sum(
+                                        1
+                                        for task in self.state.tasks.values()
+                                        if task.instance_id == instance.instance_id
+                                    )
+                                    instance_task_counts[instance.instance_id] = (
+                                        task_count
+                                    )
+
+                            if not instance_task_counts:
+                                raise ValueError(
+                                    f"No instance found for model {command.task_params.model}"
+                                )
+
+                            available_instance_ids = sorted(
+                                instance_task_counts.keys(),
+                                key=lambda instance_id: instance_task_counts[
+                                    instance_id
+                                ],
+                            )
+
+                            task_id = TaskId()
+                            selected_instance_id = available_instance_ids[0]
+                            generated_events.append(
+                                TaskCreated(
+                                    task_id=task_id,
+                                    task=VideoGenerationTask(
+                                        task_id=task_id,
+                                        command_id=command.command_id,
+                                        instance_id=selected_instance_id,
+                                        task_status=TaskStatus.Pending,
+                                        task_params=command.task_params,
+                                    ),
+                                )
+                            )
+
+                            self.command_task_mapping[command.command_id] = task_id
                         case DeleteInstance():
                             placement = delete_instance(command, self.state.instances)
                             transition_events = get_transition_events(

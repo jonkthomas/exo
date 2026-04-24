@@ -418,6 +418,57 @@ class ImageListResponse(BaseModel, frozen=True):
     data: list[ImageListItem]
 
 
+VideoSize = Literal[
+    "auto",
+    "512x512",
+    "768x512",
+    "512x768",
+    "768x768",
+    "1024x576",
+    "576x1024",
+]
+
+
+class AdvancedVideoParams(BaseModel):
+    seed: Annotated[int, Field(ge=0)] | None = None
+    num_inference_steps: Annotated[int, Field(ge=1, le=100)] | None = None
+    guidance: Annotated[float, Field(ge=1.0, le=20.0)] | None = None
+    negative_prompt: str | None = None
+    num_sync_steps: Annotated[int, Field(ge=1, le=100)] | None = None
+
+
+class VideoGenerationTaskParams(BaseModel):
+    prompt: str
+    model: str
+    n: int | None = 1
+    duration_seconds: float = 5.0
+    fps: int = 24
+    output_format: Literal["mp4", "webm"] = "mp4"
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: VideoSize = "auto"
+    stream: bool | None = False
+    advanced_params: AdvancedVideoParams | None = None
+    bench: bool = False
+
+
+class VideoData(BaseModel):
+    b64_json: str | None = None
+    url: str | None = None
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
+            if name == "b64_json" and self.b64_json is not None:
+                yield name, f"<{len(self.b64_json)} chars>"
+            elif name is not None:
+                yield name, value
+
+
+class VideoGenerationResponse(BaseModel):
+    created: int = Field(default_factory=lambda: int(time.time()))
+    data: list[VideoData]
+
+
 class StartDownloadParams(CamelCaseModel):
     target_node_id: NodeId
     shard_metadata: ShardMetadata

@@ -78,6 +78,23 @@ class InputImageChunk(BaseChunk):
                 yield name, value
 
 
+class VideoChunk(BaseChunk):
+    data: str
+    chunk_index: int
+    total_chunks: int
+    video_index: int
+    format: Literal["mp4", "webm"] | None = None
+    finish_reason: FinishReason | None = None
+    error_message: str | None = None
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():  # pyright: ignore[reportAny]
+            if name == "data" and hasattr(value, "__len__"):  # pyright: ignore[reportAny]
+                yield name, f"<{len(self.data)} chars>"
+            elif name is not None:
+                yield name, value
+
+
 class PrefillProgressChunk(BaseChunk):
     """Data class for prefill progress events during streaming."""
 
@@ -86,5 +103,5 @@ class PrefillProgressChunk(BaseChunk):
 
 
 GenerationChunk = (
-    TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk | PrefillProgressChunk
+    TokenChunk | ImageChunk | VideoChunk | ToolCallChunk | ErrorChunk | PrefillProgressChunk
 )

@@ -94,6 +94,9 @@ from exo.api.types import (
     TraceRankStats,
     TraceResponse,
     TraceStatsResponse,
+    VideoData,
+    VideoGenerationResponse,
+    VideoGenerationTaskParams,
     normalize_image_size,
 )
 from exo.api.types.claude_api import (
@@ -145,6 +148,7 @@ from exo.shared.types.chunks import (
     PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
+    VideoChunk,
 )
 from exo.shared.types.commands import (
     AddCustomModelCard,
@@ -165,6 +169,7 @@ from exo.shared.types.commands import (
     TaskCancelled,
     TaskFinished,
     TextGeneration,
+    VideoGeneration,
 )
 from exo.shared.types.common import CommandId, Id, NodeId, SystemId
 from exo.shared.types.events import (
@@ -184,6 +189,9 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
+)
+from exo.shared.types.tasks import (
+    VideoGeneration as VideoGenerationTask,
 )
 from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.shared.types.worker.downloads import DownloadCompleted
@@ -268,6 +276,9 @@ class API:
         self._image_generation_queues: dict[
             CommandId, Sender[ImageChunk | ErrorChunk]
         ] = {}
+        self._video_generation_queues: dict[
+            CommandId, Sender[VideoChunk | ErrorChunk]
+        ] = {}
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
@@ -279,6 +290,7 @@ class API:
         self._system_id = SystemId()
         self._text_generation_queues = {}
         self._image_generation_queues = {}
+        self._video_generation_queues = {}
         self.unpause(result_clock)
         self.event_receiver.close()
         self.event_receiver = event_receiver
@@ -340,6 +352,9 @@ class API:
         self.app.post("/bench/images/edits")(self.bench_image_edits)
         self.app.get("/images")(self.list_images)
         self.app.get("/images/{image_id}")(self.get_image)
+        self.app.post("/v1/videos/generations", response_model=None)(
+            self.video_generations
+        )
         self.app.post("/v1/messages", response_model=None)(self.claude_messages)
         self.app.post("/v1/responses", response_model=None)(self.openai_responses)
         self.app.post("/v1/cancel/{command_id}")(self.cancel_command)
@@ -612,9 +627,11 @@ class API:
 
     async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
         """Cancel an active command by closing its stream and notifying workers."""
-        sender = self._text_generation_queues.get(
-            command_id
-        ) or self._image_generation_queues.get(command_id)
+        sender = (
+            self._text_generation_queues.get(command_id)
+            or self._image_generation_queues.get(command_id)
+            or self._video_generation_queues.get(command_id)
+        )
         if sender is None:
             raise HTTPException(
                 status_code=404,
@@ -932,6 +949,86 @@ class API:
         host = request.headers.get("host", f"localhost:{self.port}")
         scheme = "https" if request.url.scheme == "https" else "http"
         return f"{scheme}://{host}/v1/images/{image_id}"
+
+    async def _validate_video_model(self, model: ModelId) -> ModelId:
+        """Validate video model exists and return resolved model ID."""
+        model_card = await ModelCard.load(model)
+        resolved_model = model_card.model_id
+        if not any(
+            instance.shard_assignments.model_id == resolved_model
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(resolved_model)
+            raise HTTPException(
+                status_code=404, detail=f"No instance found for video model {resolved_model}"
+            )
+        return resolved_model
+
+    async def video_generations(
+        self, request: Request, payload: VideoGenerationTaskParams,
+    ) -> VideoGenerationResponse:
+        """Handle video generation requests."""
+        payload = payload.model_copy(
+            update={
+                "model": await self._validate_video_model(ModelId(payload.model)),
+            }
+        )
+
+        command = VideoGeneration(task_params=payload)
+        await self._send(command)
+
+        num_videos = payload.n or 1
+
+        try:
+            self._video_generation_queues[command.command_id], recv = channel[
+                VideoChunk | ErrorChunk
+            ]()
+
+            collected_chunks: dict[int, dict[int, str]] = {}
+            video_total_chunks: dict[int, int] = {}
+            videos_complete = 0
+
+            with recv as chunks:
+                async for chunk in chunks:
+                    if isinstance(chunk, ErrorChunk):
+                        raise HTTPException(
+                            status_code=500,
+                            detail=chunk.error_message or "Video generation failed",
+                        )
+
+                    assert isinstance(chunk, VideoChunk)
+                    if chunk.video_index not in collected_chunks:
+                        collected_chunks[chunk.video_index] = {}
+                        video_total_chunks[chunk.video_index] = chunk.total_chunks
+
+                    collected_chunks[chunk.video_index][chunk.chunk_index] = chunk.data
+
+                    if (
+                        len(collected_chunks[chunk.video_index])
+                        == video_total_chunks[chunk.video_index]
+                    ):
+                        videos_complete += 1
+
+                    if videos_complete >= num_videos:
+                        break
+
+            videos: list[VideoData] = []
+            for video_idx in range(num_videos):
+                chunks_dict = collected_chunks[video_idx]
+                full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
+                videos.append(VideoData(b64_json=full_data))
+
+            return VideoGenerationResponse(data=videos)
+        except anyio.get_cancelled_exc_class():
+            cancel_cmd = TaskCancelled(cancelled_command_id=command.command_id)
+            with anyio.CancelScope(shield=True):
+                await self.command_sender.send(
+                    ForwarderCommand(origin=self._system_id, command=cancel_cmd)
+                )
+            raise
+        finally:
+            await self._send(TaskFinished(finished_command_id=command.command_id))
+            self._video_generation_queues.pop(command.command_id, None)
 
     async def image_generations(
         self, request: Request, payload: ImageGenerationTaskParams
@@ -1819,10 +1916,18 @@ class API:
                             await queue.send(event.chunk)
                         except (BrokenResourceError, ClosedResourceError):
                             self._image_generation_queues.pop(event.command_id, None)
+                    if queue := self._video_generation_queues.get(
+                        event.command_id, None
+                    ):
+                        assert isinstance(event.chunk, (VideoChunk, ErrorChunk))
+                        try:
+                            await queue.send(event.chunk)
+                        except (BrokenResourceError, ClosedResourceError):
+                            self._video_generation_queues.pop(event.command_id, None)
                     if queue := self._text_generation_queues.get(
                         event.command_id, None
                     ):
-                        assert not isinstance(event.chunk, ImageChunk)
+                        assert not isinstance(event.chunk, (ImageChunk, VideoChunk))
                         try:
                             await queue.send(event.chunk)
                         except (BrokenResourceError, ClosedResourceError):
@@ -1838,12 +1943,14 @@ class API:
             if task.instance_id != instance_id:
                 continue
             if not isinstance(
-                task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+                task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask, VideoGenerationTask)
             ):
                 continue
             if sender := self._text_generation_queues.pop(task.command_id, None):
                 sender.close()
             if sender := self._image_generation_queues.pop(task.command_id, None):
+                sender.close()
+            if sender := self._video_generation_queues.pop(task.command_id, None):
                 sender.close()
 
     def _save_merged_trace(self, event: TracesMerged) -> None:

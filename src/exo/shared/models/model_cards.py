@@ -23,6 +23,7 @@ from tomlkit.exceptions import TOMLKitError
 from exo.shared.constants import (
     EXO_CUSTOM_MODEL_CARDS_DIR,
     EXO_ENABLE_IMAGE_MODELS,
+    EXO_ENABLE_VIDEO_MODELS,
     EXO_MODELS_DIRS,
     RESOURCES_DIR,
 )
@@ -36,6 +37,7 @@ _custom_cards_dir = Path(str(EXO_CUSTOM_MODEL_CARDS_DIR))
 _BUILTIN_CARD_DIRS = [
     Path(RESOURCES_DIR) / "inference_model_cards",
     Path(RESOURCES_DIR) / "image_model_cards",
+    Path(RESOURCES_DIR) / "video_model_cards",
 ]
 
 _card_cache: dict[ModelId, "ModelCard"] = {}
@@ -81,6 +83,10 @@ def _is_image_card(card: "ModelCard") -> bool:
     return any(t in (ModelTask.TextToImage, ModelTask.ImageToImage) for t in card.tasks)
 
 
+def _is_video_card(card: "ModelCard") -> bool:
+    return any(t == ModelTask.TextToVideo for t in card.tasks)
+
+
 def get_card(model_id: ModelId) -> "ModelCard | None":
     """Look up a single model card from the cache by ID."""
     return _card_cache.get(model_id)
@@ -89,15 +95,19 @@ def get_card(model_id: ModelId) -> "ModelCard | None":
 async def get_model_cards() -> list["ModelCard"]:
     if len(_card_cache) == 0:
         await _refresh_card_cache()
-    if EXO_ENABLE_IMAGE_MODELS:
-        return list(_card_cache.values())
-    return [c for c in _card_cache.values() if not _is_image_card(c)]
+    cards = list(_card_cache.values())
+    if not EXO_ENABLE_IMAGE_MODELS:
+        cards = [c for c in cards if not _is_image_card(c)]
+    if not EXO_ENABLE_VIDEO_MODELS:
+        cards = [c for c in cards if not _is_video_card(c)]
+    return cards
 
 
 class ModelTask(str, Enum):
     TextGeneration = "TextGeneration"
     TextToImage = "TextToImage"
     ImageToImage = "ImageToImage"
+    TextToVideo = "TextToVideo"
 
 
 class ComponentInfo(CamelCaseModel):

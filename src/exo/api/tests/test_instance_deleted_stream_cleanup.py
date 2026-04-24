@@ -22,6 +22,7 @@ def _make_api_with_state(state: State) -> API:
     api.state = state
     api._text_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
     api._image_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
+    api._video_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
     return api
 
 

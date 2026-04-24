@@ -3,6 +3,7 @@ from pydantic import Field
 from exo.api.types import (
     ImageEditsTaskParams,
     ImageGenerationTaskParams,
+    VideoGenerationTaskParams,
 )
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.chunks import InputImageChunk
@@ -31,6 +32,10 @@ class ImageGeneration(BaseCommand):
 
 class ImageEdits(BaseCommand):
     task_params: ImageEditsTaskParams
+
+
+class VideoGeneration(BaseCommand):
+    task_params: VideoGenerationTaskParams
 
 
 class PlaceInstance(BaseCommand):
@@ -98,6 +103,7 @@ Command = (
     | TextGeneration
     | ImageGeneration
     | ImageEdits
+    | VideoGeneration
     | PlaceInstance
     | CreateInstance
     | DeleteInstance

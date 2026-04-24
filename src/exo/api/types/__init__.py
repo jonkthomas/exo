@@ -58,4 +58,8 @@ from .api import TraceRankStats as TraceRankStats
 from .api import TraceResponse as TraceResponse
 from .api import TraceStatsResponse as TraceStatsResponse
 from .api import Usage as Usage
+from .api import VideoData as VideoData
+from .api import VideoGenerationResponse as VideoGenerationResponse
+from .api import VideoGenerationTaskParams as VideoGenerationTaskParams
+from .api import VideoSize as VideoSize
 from .api import normalize_image_size as normalize_image_size

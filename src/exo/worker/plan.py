@@ -18,6 +18,7 @@ from exo.shared.types.tasks import (
     TaskId,
     TaskStatus,
     TextGeneration,
+    VideoGeneration,
 )
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -304,7 +305,7 @@ def _pending_tasks(
     for task in tasks.values():
         # for now, just forward chat completions
         # TODO(ciaran): do this better!
-        if not isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
+        if not isinstance(task, (TextGeneration, ImageGeneration, ImageEdits, VideoGeneration)):
             continue
         if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
             continue
