@@ -102,14 +102,15 @@ class Runner:
             )
         )
 
+    def send_task_status(self, task: Task, status: TaskStatus) -> None:
+        self.event_sender.send(
+            TaskStatusUpdated(task_id=task.task_id, task_status=status)
+        )
+
     def _check_cancelled(self, task_id: TaskId) -> bool:
         """Check if a task has been cancelled."""
-        while True:
-            try:
-                cancelled_id = self.cancel_receiver.recv_nowait()
-                self._cancelled_tasks.add(cancelled_id)
-            except Exception:
-                break
+        for cancel_id in self.cancel_receiver.collect():
+            self._cancelled_tasks.add(cancel_id)
         return task_id in self._cancelled_tasks or CANCEL_ALL_TASKS in self._cancelled_tasks
 
     def _run_video_task(
@@ -172,13 +173,6 @@ class Runner:
                     )
                 )
 
-        # Mark task complete
-        self.event_sender.send(
-            TaskStatusUpdated(
-                task_id=task.task_id,
-                task_status=TaskStatus.Complete,
-            )
-        )
         self.update_status(RunnerReady())
 
     def handle_task(self, task: Task) -> None:
@@ -228,14 +222,19 @@ class Runner:
         logger.info("Video runner starting")
         self.update_status(RunnerIdle())
 
-        while not isinstance(self.current_status, RunnerShutdown):
-            try:
-                task = self.task_receiver.recv()
+        with self.task_receiver as tasks:
+            for task in tasks:
+                self._cancelled_tasks.discard(CANCEL_ALL_TASKS)
+                self.send_task_status(task, TaskStatus.Running)
                 self.handle_task(task)
-            except Exception as e:
+                was_cancelled = (task.task_id in self._cancelled_tasks) or (
+                    CANCEL_ALL_TASKS in self._cancelled_tasks
+                )
+                if not was_cancelled:
+                    self.send_task_status(task, TaskStatus.Complete)
+                self.update_status(self.current_status)
+
                 if isinstance(self.current_status, RunnerShutdown):
                     break
-                logger.opt(exception=e).warning(f"Video runner error: {e}")
-                break
 
         logger.info("Video runner shutting down")
