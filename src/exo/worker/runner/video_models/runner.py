@@ -95,12 +95,7 @@ class Runner:
         )
 
     def acknowledge_task(self, task: Task) -> None:
-        self.event_sender.send(
-            TaskAcknowledged(
-                task_id=task.task_id,
-                runner_id=self.bound_instance.bound_runner_id,
-            )
-        )
+        self.event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
     def send_task_status(self, task: Task, status: TaskStatus) -> None:
         self.event_sender.send(
@@ -181,7 +176,7 @@ class Runner:
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)
                 self.group = initialize_mlx(self.bound_instance)
-                self.update_status(RunnerConnected())
+                self.current_status = RunnerConnected()
 
             case LoadModel() if (
                 isinstance(self.current_status, RunnerConnected)
@@ -193,14 +188,14 @@ class Runner:
                 self.acknowledge_task(task)
                 assert ModelTask.TextToVideo in self.shard_metadata.model_card.tasks
                 self.video_model = initialize_video_model(self.bound_instance)
-                self.update_status(RunnerLoaded())
+                self.current_status = RunnerLoaded()
 
             case StartWarmup() if isinstance(self.current_status, RunnerLoaded):
                 self.update_status(RunnerWarmingUp())
                 self.acknowledge_task(task)
                 if self.video_model:
                     warmup_video_generator(self.video_model)
-                self.update_status(RunnerReady())
+                self.current_status = RunnerReady()
 
             case VideoGeneration(
                 task_params=task_params, command_id=command_id
@@ -210,7 +205,7 @@ class Runner:
             case Shutdown():
                 self.update_status(RunnerShuttingDown())
                 self.acknowledge_task(task)
-                self.update_status(RunnerShutdown())
+                self.current_status = RunnerShutdown()
 
             case _:
                 logger.warning(
