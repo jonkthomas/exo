@@ -10,7 +10,7 @@ from mlx_lm.generate import (
     maybe_quantize_kv_cache,
     stream_generate,
 )
-from mlx_lm.models.cache import ArraysCache, RotatingKVCache
+from mlx_lm.models.cache import ArraysCache, CacheList, RotatingKVCache
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -372,12 +372,15 @@ def prefill(
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
     pre_gen = deepcopy(snapshots[-2]) if has_ssm else None
     for i, c in enumerate(cache):
-        if has_ssm and isinstance(c, (ArraysCache, RotatingKVCache)):
+        non_trimmable = isinstance(c, (ArraysCache, RotatingKVCache)) or (
+            isinstance(c, CacheList) and not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
+        )
+        if has_ssm and non_trimmable:
             assert pre_gen is not None
             if pre_gen.states[i] is not None:
                 cache[i] = deepcopy(pre_gen.states[i])  # type: ignore
         else:
-            assert not isinstance(c, (ArraysCache, RotatingKVCache))
+            assert not non_trimmable
             c.trim(2)
 
     elapsed = time.perf_counter() - start_time

@@ -46,7 +46,9 @@ class CacheSnapshot:
     """Snapshot of states at a known token position."""
 
     def __init__(
-        self, states: list[RotatingKVCache | ArraysCache | None], token_count: int
+        self,
+        states: list[RotatingKVCache | ArraysCache | CacheList | None],
+        token_count: int,
     ):
         self.states = states
         self.token_count = token_count
@@ -83,13 +85,27 @@ def copy_rotating_kv_cache(cache: RotatingKVCache) -> RotatingKVCache | None:
     return snap
 
 
+def _copy_cache_list(cl: CacheList) -> CacheList:
+    inners: list[object] = list(cl)  # type: ignore[reportUnknownArgumentType]
+    copied: list[object] = []
+    for inner in inners:
+        if isinstance(inner, RotatingKVCache):
+            snap = copy_rotating_kv_cache(inner)
+            copied.append(snap if snap is not None else deepcopy(inner))
+        else:
+            copied.append(deepcopy(inner))
+    return CacheList(*copied)
+
+
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
-    states: list[ArraysCache | RotatingKVCache | None] = []
+    states: list[ArraysCache | RotatingKVCache | CacheList | None] = []
     for c in cache:
         if isinstance(c, ArraysCache):
             states.append(deepcopy(c))
         elif isinstance(c, RotatingKVCache):
             states.append(copy_rotating_kv_cache(c))
+        elif isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
+            states.append(_copy_cache_list(c))
         else:
             states.append(None)
     token_count = cache_length(cache)
@@ -111,7 +127,12 @@ def _find_nearest_snapshot(
 
 def has_non_kv_caches(cache: KVCacheType) -> bool:
     """Check if a cache contains any ArraysCache (SSM) entries."""
-    return any(isinstance(c, (ArraysCache, RotatingKVCache)) for c in cache)
+    for c in cache:
+        if isinstance(c, CacheList):
+            return any(isinstance(_c, (ArraysCache, RotatingKVCache)) for _c in c)  # type: ignore[reportUnknownVariableType]
+        elif isinstance(c, (ArraysCache, RotatingKVCache)):
+            return True
+    return False
 
 
 class KVPrefixCache:
