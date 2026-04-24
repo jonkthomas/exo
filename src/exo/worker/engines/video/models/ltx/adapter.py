@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import mlx.core as mx
-import mlx.nn as nn
 from loguru import logger
 from PIL import Image
 
@@ -16,13 +15,10 @@ if TYPE_CHECKING:
 
 
 class LtxModelAdapter(VideoModelAdapter):
-    """Model adapter for LTX-Video-2 models.
+    """Model adapter for LTX-Video-2 using mlx-video.
 
-    LTX-2 is a DiT-based video generation model with:
-    - Gemma 3 text encoder (or T5 for some variants)
-    - Asymmetric dual-stream transformer (video + audio, we handle video only)
-    - 3D spatiotemporal VAE decoder
-    - Flow matching scheduler
+    Delegates to mlx_video.models.ltx_2.generate.generate_video() which handles
+    the full pipeline: text encoding, denoising, VAE decoding.
     """
 
     def __init__(
@@ -32,46 +28,23 @@ class LtxModelAdapter(VideoModelAdapter):
         local_path: Path,
     ) -> None:
         super().__init__(config, model_id, local_path)
-        self._text_encoder: nn.Module | None = None
-        self._transformer: nn.Module | None = None
-        self._vae: nn.Module | None = None
-        self._scheduler_config: dict[str, object] | None = None
+        self._loaded = False
 
     def load(self) -> None:
-        """Load LTX-2 model components from local path.
-
-        TODO: Implement full model loading once mlx-video or a dedicated
-        MLX implementation for LTX-2 is integrated.
-        """
-        logger.info(f"Loading LTX-2 model from {self._local_path}")
-
-        # Load scheduler config if available
-        scheduler_path = self._local_path / "scheduler" / "scheduler_config.json"
-        if scheduler_path.exists():
-            with open(scheduler_path) as f:
-                self._scheduler_config = json.load(f)
-
-        # TODO: Load text encoder, transformer, and VAE weights
-        # This requires integration with mlx-video or a custom MLX implementation
-        # of the LTX-2 architecture.
-        #
-        # For now, this adapter provides the interface scaffolding.
-        # The actual weight loading will be implemented when we integrate
-        # with the mlx-video package or port the LTX-2 PyTorch code to MLX.
-        logger.warning(
-            "LTX-2 adapter: model loading is scaffolded. "
-            "Full implementation requires mlx-video integration."
-        )
+        """Verify model files exist. Actual loading is deferred to generate_video()."""
+        logger.info(f"Verifying LTX-2 model at {self._local_path}")
+        model_file = self._local_path / "ltx-2-19b-distilled.safetensors"
+        text_encoder_dir = self._local_path / "text_encoder"
+        if not model_file.exists() and not list(self._local_path.glob("*.safetensors")):
+            raise FileNotFoundError(f"No safetensors found at {self._local_path}")
+        if not text_encoder_dir.exists():
+            raise FileNotFoundError(f"Text encoder not found at {text_encoder_dir}")
+        self._loaded = True
+        logger.info("LTX-2 model files verified")
 
     def encode_prompt(self, prompt: str, negative_prompt: str | None = None) -> mx.array:
-        """Encode text prompt using the text encoder (Gemma 3 or T5)."""
-        if self._text_encoder is None:
-            # Return placeholder embeddings for scaffolding
-            logger.warning("Text encoder not loaded, returning placeholder embeddings")
-            return mx.zeros((1, 128, 2048))
-
-        # TODO: Implement actual prompt encoding
-        raise NotImplementedError("LTX-2 prompt encoding not yet implemented")
+        """Not used — mlx-video handles encoding internally."""
+        return mx.zeros((1, 1, 1))
 
     def create_latents(
         self,
@@ -80,17 +53,8 @@ class LtxModelAdapter(VideoModelAdapter):
         height: int,
         width: int,
     ) -> mx.array:
-        """Create initial noise latents for video diffusion.
-
-        LTX-2 uses 4x16x16 spatiotemporal compression, so latent dimensions
-        are: (batch, channels, temporal, height//16, width//16)
-        """
-        mx.random.seed(seed)
-        # LTX-2 latent space: 128 channels, compressed spatiotemporally
-        temporal_len = max(1, num_frames // 4)
-        latent_h = height // 16
-        latent_w = width // 16
-        return mx.random.normal((1, 128, temporal_len, latent_h, latent_w))
+        """Not used — mlx-video handles latent creation internally."""
+        return mx.zeros((1,))
 
     def denoise_step(
         self,
@@ -99,36 +63,77 @@ class LtxModelAdapter(VideoModelAdapter):
         timestep: float,
         guidance_scale: float | None = None,
     ) -> mx.array:
-        """Run a single denoising step through the transformer."""
-        if self._transformer is None:
-            # Placeholder: return slightly less noisy latents
-            return latents * 0.99
-
-        # TODO: Implement actual denoising step
-        raise NotImplementedError("LTX-2 denoising not yet implemented")
+        """Not used — mlx-video handles denoising internally."""
+        return latents
 
     def decode_latents(self, latents: mx.array) -> list[Image.Image]:
-        """Decode latents to video frames using the 3D VAE decoder."""
-        if self._vae is None:
-            # Return placeholder frames for scaffolding
-            logger.warning("VAE not loaded, returning placeholder frames")
-            num_frames = latents.shape[2] * 4 if latents.ndim >= 3 else 24
-            return [
-                Image.new("RGB", (512, 512), color=(64, 64, 64))
-                for _ in range(num_frames)
-            ]
-
-        # TODO: Implement actual VAE decoding
-        raise NotImplementedError("LTX-2 VAE decoding not yet implemented")
+        """Not used — mlx-video handles decoding internally."""
+        return []
 
     def get_timesteps(self, num_steps: int) -> list[float]:
-        """Return flow matching timestep schedule.
+        """Not used — mlx-video handles scheduling internally."""
+        return []
 
-        LTX-2 uses a linear flow matching schedule from 1.0 to 0.0.
+    def generate_full(
+        self,
+        prompt: str,
+        num_frames: int,
+        height: int,
+        width: int,
+        seed: int,
+        num_steps: int,
+        guidance_scale: float | None,
+        fps: int = 24,
+    ) -> list[Image.Image]:
+        """Generate video using mlx-video's full pipeline.
+
+        This is the main entry point — it delegates to mlx_video's generate_video()
+        which handles text encoding, denoising, and VAE decoding internally.
         """
-        return [1.0 - i / num_steps for i in range(num_steps)]
+        from mlx_video.models.ltx_2.generate import (
+            PipelineType,  # pyright: ignore[reportMissingImports]
+        )
+        from mlx_video.models.ltx_2.generate import (
+            generate_video as mlx_generate,  # pyright: ignore[reportMissingImports]
+        )
 
-    def slice_transformer_blocks(self, start_layer: int, end_layer: int) -> None:
-        """Slice transformer blocks for distributed pipeline parallelism."""
-        logger.info(f"Slicing LTX-2 transformer: layers [{start_layer}, {end_layer})")
-        # TODO: Implement layer slicing once transformer is loaded
+        # Determine if this is a distilled or dev model
+        is_distilled = "distilled" in self._model_id.lower()
+        pipeline = PipelineType.DISTILLED if is_distilled else PipelineType.DEV
+
+        # Use HuggingFace repo ID so mlx-video can resolve the model
+        # in its expected directory structure (transformer/, vae/, etc.)
+        model_repo = self._model_id  # e.g. "mlx-community/LTX-2-distilled-bf16"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = str(Path(tmpdir) / "output.mp4")
+
+            logger.info(
+                f"Running LTX-2 generation: {width}x{height}, {num_frames} frames, "
+                f"pipeline={pipeline.value}, steps={num_steps}"
+            )
+
+            video_np = mlx_generate(
+                model_repo=model_repo,
+                text_encoder_repo=None,
+                prompt=prompt,
+                pipeline=pipeline,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+                num_inference_steps=num_steps,
+                cfg_scale=guidance_scale or 4.0,
+                seed=seed,
+                fps=fps,
+                output_path=output_path,
+                verbose=True,
+                audio=False,
+            )
+
+            # Convert numpy frames to PIL Images
+            frames: list[Image.Image] = []
+            for frame_np in video_np:
+                frames.append(Image.fromarray(frame_np))  # pyright: ignore[reportUnknownArgumentType]
+
+            logger.info(f"Generated {len(frames)} frames")
+            return frames

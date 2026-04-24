@@ -25,10 +25,7 @@ class VideoGenerationResponse:
 
 
 def _frames_to_mp4_bytes(frames: list[Image.Image], fps: int = 24) -> bytes:
-    """Encode a list of PIL Image frames into MP4 bytes.
-
-    Uses a simple uncompressed approach. For production, consider using ffmpeg.
-    """
+    """Encode a list of PIL Image frames into MP4 bytes."""
     try:
         import imageio.v3 as iio  # pyright: ignore[reportMissingImports]
         import numpy as np
@@ -38,7 +35,6 @@ def _frames_to_mp4_bytes(frames: list[Image.Image], fps: int = 24) -> bytes:
         iio.imwrite(buf, arrays, extension=".mp4", fps=fps)  # pyright: ignore[reportUnknownMemberType]
         return buf.getvalue()
     except ImportError:
-        # Fallback: return frames as animated GIF if imageio not available
         logger.warning("imageio not available, falling back to GIF output")
         buf = io.BytesIO()
         frames[0].save(
@@ -53,7 +49,7 @@ def _frames_to_mp4_bytes(frames: list[Image.Image], fps: int = 24) -> bytes:
 
 
 def _resolve_dimensions(
-    size: str, default_width: int = 768, default_height: int = 512
+    size: str, default_width: int = 512, default_height: int = 512
 ) -> tuple[int, int]:
     if size == "auto":
         return default_width, default_height
@@ -62,12 +58,8 @@ def _resolve_dimensions(
 
 
 def warmup_video_generator(model: DistributedVideoModel) -> None:
-    """Run a minimal forward pass to warm up the model."""
-    logger.info("Warming up video model...")
-    # Minimal warmup: encode a short prompt
-    prompt_embeds = model.adapter.encode_prompt("warmup")
-    mx.eval(prompt_embeds)
-    logger.info("Video model warmup complete")
+    """Warmup is a no-op — mlx-video loads on first generation."""
+    logger.info("Video model warmup (deferred to first generation)")
 
 
 def generate_video(
@@ -77,7 +69,9 @@ def generate_video(
 ) -> Generator[VideoGenerationResponse, None, None]:
     """Generate video from a text prompt.
 
-    Yields VideoGenerationResponse when complete.
+    Uses mlx-video's generate_video() for the full pipeline if the adapter
+    supports it (generate_full method), otherwise falls back to the step-by-step
+    adapter interface.
     """
     quality = task.quality or "medium"
     num_steps = model.config.get_steps_for_quality(quality)
@@ -96,48 +90,63 @@ def generate_video(
     duration = task.duration_seconds
     num_frames = int(fps * duration)
 
+    # LTX-2 requires num_frames = 1 + 8*k
+    if num_frames % 8 != 1:
+        num_frames = round((num_frames - 1) / 8) * 8 + 1
+        if num_frames < 9:
+            num_frames = 9
+
     width, height = _resolve_dimensions(task.size)
+
+    # LTX-2 requires dimensions divisible by 64 (distilled) or 32 (dev)
+    height = (height // 64) * 64
+    width = (width // 64) * 64
+    if height == 0:
+        height = 512
+    if width == 0:
+        width = 512
 
     logger.info(
         f"Generating video: {num_frames} frames at {width}x{height}, "
-        f"{num_steps} steps, guidance={guidance_scale}"
+        f"{num_steps} steps, guidance={guidance_scale}, seed={seed}"
     )
 
-    # 1. Encode prompt
-    prompt_embeds = model.adapter.encode_prompt(
-        task.prompt,
-        negative_prompt=(
-            task.advanced_params.negative_prompt
-            if task.advanced_params
-            else None
-        ),
-    )
-    mx.eval(prompt_embeds)
-
-    # 2. Create initial latents
-    latents = model.adapter.create_latents(seed, num_frames, height, width)
-    mx.eval(latents)
-
-    # 3. Iterative denoising
-    timesteps = model.adapter.get_timesteps(num_steps)
-    for i, t in enumerate(timesteps):
-        if cancel_checker and cancel_checker():
-            logger.info("Video generation cancelled")
-            return
-
-        latents = model.adapter.denoise_step(
-            latents, prompt_embeds, t, guidance_scale
+    # Use the full mlx-video pipeline if adapter supports it
+    if hasattr(model.adapter, "generate_full"):
+        frames = model.adapter.generate_full(
+            prompt=task.prompt,
+            num_frames=num_frames,
+            height=height,
+            width=width,
+            seed=seed,
+            num_steps=num_steps,
+            guidance_scale=guidance_scale,
+            fps=fps,
         )
+    else:
+        # Fallback: step-by-step adapter interface
+        prompt_embeds = model.adapter.encode_prompt(
+            task.prompt,
+            negative_prompt=(
+                task.advanced_params.negative_prompt if task.advanced_params else None
+            ),
+        )
+        mx.eval(prompt_embeds)
+
+        latents = model.adapter.create_latents(seed, num_frames, height, width)
         mx.eval(latents)
 
-        if (i + 1) % 5 == 0:
-            logger.info(f"Denoising step {i + 1}/{num_steps}")
+        timesteps = model.adapter.get_timesteps(num_steps)
+        for _i, t in enumerate(timesteps):
+            if cancel_checker and cancel_checker():
+                logger.info("Video generation cancelled")
+                return
+            latents = model.adapter.denoise_step(latents, prompt_embeds, t, guidance_scale)
+            mx.eval(latents)
 
-    # 4. Decode latents to frames
-    logger.info("Decoding latents to video frames...")
-    frames = model.adapter.decode_latents(latents)
+        frames = model.adapter.decode_latents(latents)
 
-    # 5. Encode frames to video
+    # Encode frames to video
     logger.info(f"Encoding {len(frames)} frames to mp4...")
     video_bytes = _frames_to_mp4_bytes(frames, fps=fps)
 
