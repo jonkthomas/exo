@@ -148,11 +148,11 @@ let
           });
           nvidia-cusparse = prev.nvidia-cusparse.overrideAttrs (old: {
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
-            buildInputs = old.buildInputs ++ [ cudaLibs ];
+            buildInputs = old.buildInputs ++ cudaLibs;
           });
           nvidia-cusparse-cu12 = prev.nvidia-cusparse-cu12.overrideAttrs (old: {
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
-            buildInputs = old.buildInputs ++ [ cudaLibs ];
+            buildInputs = old.buildInputs ++ cudaLibs;
           });
 
           torch = prev.torch.overrideAttrs (old: {
@@ -167,14 +167,8 @@ let
           numba = prev.numba.overrideAttrs (old: {
             buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.tbb ];
           });
-          intel-openmp = prev.intel-openmp.overrideAttrs (_old: {
-            postFixup = ''
-              rm -f $out/lib/libarcher.so
-              rm -f $out/lib/libomptarget.so
-              rm -f $out/lib/libomptarget.rtl.*.so*
-              rm -f $out/lib/libomptarget.sycl.wrap.so
-            '';
-          }); };
+        };
+      vllmOverlay = pkgs.callPackage ../nix/vllm.nix { inherit python cudaSupport; rocmSupport = false; };
 
       pyprojectOverlay = workspace.mkPyprojectOverlay {
         sourcePreference = "wheel";
@@ -193,6 +187,7 @@ let
           pyprojectOverlay
           exoOverlay
           buildSystemsOverlay
+          vllmOverlay
         ]
       );
       venv = name: (pythonSet.mkVirtualEnv "${name}-env" members).overrideAttrs (_: { venvSkip = [ "lib/python${python.pythonVersion}/site-packages/mlx/share/cmake/*" ]; });
@@ -258,7 +253,6 @@ in
       } // lib.optionalAttrs isLinux {
         exo-cuda-12 = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_12) pkgs; members = { exo = [ "cuda12" ]; }; }).mkExo "exo-cuda-12";
         exo-cuda-13 = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_13) pkgs; members = { exo = [ "cuda13" ]; }; }).mkExo "exo-cuda-13";
-        exo-vllm = (mkPythonSet { inherit self' lib; inherit (unfreePkgs.pkgsCuda.cudaPackages_13) pkgs; members = { exo = [ "vllm" "cuda13" ]; }; }).mkExo "exo-vllm";
       };
 
       checks = {

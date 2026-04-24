@@ -64,9 +64,8 @@ cuda13 = [
   "mlx-cuda-13==0.31.1; sys_platform == 'linux'",
   "mlx-lm; sys_platform == 'linux'",
   "torch>=2.10.0; sys_platform == 'linux'",
-]
-vllm = [
-  "vllm[fastsafetensors]; sys_platform == 'linux'",
+  "vllm; sys_platform == 'linux'",
+  "fastsafetensors >= 0.3; sys_platform=='linux'",
 ]
 
 ###
