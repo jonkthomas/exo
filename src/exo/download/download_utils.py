@@ -362,6 +362,15 @@ async def fetch_file_list_with_cache(
     cache_file = target_dir / f"{model_id.normalize()}--{revision}--file_list.json"
     cache_key = f"{model_id.normalize()}--{revision}"
 
+    local_file_list = await _build_file_list_from_local_directory(
+        model_id, recursive
+    )
+    if local_file_list is not None:
+        logger.warning(
+            f"Failed to fetch file list for {model_id} and no cache exists, using local file list"
+        )
+        return local_file_list
+
     if cache_key in _fetched_file_lists_this_session and await aios.path.exists(
         cache_file
     ):
